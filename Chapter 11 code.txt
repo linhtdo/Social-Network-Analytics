@@ -1,0 +1,117 @@
+######################################################################################################################
+# I: LOADING AND PRE-PROCESSING TEXT DATA
+######################################################################################################################
+
+setwd('C:/Users/Shaila/Dropbox/Classes/Social Analytics/Social Analytics Book/Supporting Files/Data/For R Exercises')
+
+library(tm)
+						#create custom SearchReplace function
+SearchReplace=content_transformer(function(x,pattern1, pattern2) gsub(pattern1,pattern2,x))
+
+ReyPosts=read.csv('WheresRey.csv',header=T)
+ReyCorp=Corpus(VectorSource(ReyPosts$Posts))
+						#use custom SearchReplace function to re-tokenize and lemmatize
+ReyCorp=tm_map(ReyCorp,SearchReplace,'theforceawakens','the force awakens')
+ReyCorp=tm_map(ReyCorp,SearchReplace,'merchsexismproblem','merch sexism problem')
+ReyCorp=tm_map(ReyCorp,SearchReplace,'highlightsdearthfemaletoyhtml', 'highlights dearth female toy')
+ReyCorp=tm_map(ReyCorp,SearchReplace,'forceawakens','force awakens')
+ReyCorp=tm_map(ReyCorp,SearchReplace,'arewereallygoingtostart','are we really going to start')
+ReyCorp=tm_map(ReyCorp,SearchReplace,'makers','maker')
+ReyCorp=tm_map(ReyCorp,SearchReplace,'highlights','highlight')
+ReyCorp=tm_map(ReyCorp,SearchReplace,'figures','figure')
+ReyCorp=tm_map(ReyCorp,SearchReplace,'merchandise','merch')
+ReyCorp=tm_map(ReyCorp,SearchReplace,'merchs','merch')
+ReyCorp=tm_map(ReyCorp,SearchReplace,'merch','merchandise')
+ReyCorp=tm_map(ReyCorp,SearchReplace,'shes','she is')
+						#other pre-processing tasks
+ReyCorp=tm_map(ReyCorp,content_transformer(tolower))
+ReyCorp=tm_map(ReyCorp, removeWords, stopwords('english'))
+ReyCorp=tm_map(ReyCorp, removePunctuation)
+ReyCorp=tm_map(ReyCorp, removeNumbers)
+ReyCorp=tm_map(ReyCorp, stripWhitespace)
+
+ReyTDM=removeSparseTerms(TermDocumentMatrix(ReyCorp),.975)
+
+######################################################################################################################
+# II: FIND TERM ASSOCIATIONS
+######################################################################################################################
+
+findAssocs(ReyTDM, 'whereisrey', 0.20)		#can be exported as an edgelist to NodeXL for visualization
+
+######################################################################################################################
+# III: TOPIC MODELING VIA CLUSTER ANALYSIS OF TERMS
+######################################################################################################################
+						#hierarchical cluster analysis
+ReyDist=dist(ReyTDM,method='euclidean')		#find the distance between each pair of terms
+ReyClust=hclust(d=ReyDist, method='ward.D')	#cluster the distance matrix
+plot(ReyClust)					#plot the cluster solution
+						#plot the cluster solution a little better
+plot(ReyClust, yaxt='n', xlab='', ylab='', hang=1.25, main='', sub='', cex=1.25)
+rect.hclust(ReyClust, k=9, border='red2')	#mark a specified number of clusters 
+
+ReyTopics=cutree(ReyClust,k=4) 			#identify which topics were assigned to each cluster
+ReyTopics
+
+						
+ReyKClust=kmeans(ReyDist, 6)			#k-means cluster analysis
+ReyKClust$cluster  				#which topics were assigned to each cluster
+ReyKClust$centers  				#average of each term frequency for each cluster
+
+######################################################################################################################
+# III: TOPIC MODELING VIA NETWORK ANALYSIS OF TERMS
+######################################################################################################################
+
+library(igraph)
+						#create adjacency matrix from TDM x t(TDM)
+ReyCooccurMatrix=as.matrix(ReyTDM)%*%t(as.matrix(ReyTDM))
+						#create simplified graph data object from adjacency matrix
+ReyGraph=simplify(graph.adjacency(ReyCooccurMatrix, weighted=T, mode='undirected'))
+V(ReyGraph)$color='yellow'			#plot the term graph
+plot(ReyGraph, layout=layout.gem(ReyGraph), vertex.shape='sphere')
+
+evcent(ReyGraph)$vector 			#determine the centrality of terms to conversation
+mc=multilevel.community(ReyGraph) 		#discover term groupings via community analysis
+wc=walktrap.community(ReyGraph)
+
+cbind(mc$names,mc$membership)			#which terms were assigned to different topics
+						#plot the different topics
+plot(mc, ReyGraph, vertex.shape='sphere',layout=layout.davidson.harel, vertex.label.color= 'black')
+title('Topics',cex.main=2,col.main='black')	#slap a title on it
+
+						#create a correlation matrix from t(TDM)
+ReyCorrel=cor(as.matrix(t(ReyTDM)))
+ReyCorrel[ReyCorrel<0]=0			#set negative correlations=0 'coz edges can't have negative weight
+						#create simplified, weighted graph data object from adjacency matrix
+ReyGraph=simplify(graph.adjacency(ReyCorrel, weighted=T, mode='undirected'))
+						#plot
+plot(ReyGraph, layout=layout.gem(ReyGraph), vertex.shape='sphere',vertex.label.color='black')
+						
+evcent(ReyGraph)$vector				#determine the centrality of the terms to conversation
+mc=multilevel.community(ReyGraph)		#discover term groupings via community analysis
+						#plot the different topics
+plot(mc, ReyGraph, vertex.shape='sphere',layout=layout.davidson.harel, edge.curved=T, vertex.label.color= 'black')
+title('Topics',cex.main=2,col.main='black')
+
+######################################################################################################################
+# III: TOPIC MODELING VIA LATENT DIRICHLET ALLOCATION
+######################################################################################################################
+
+library(topicmodels)
+						#get a complete DTM, otherwise will have to delete documents with
+ReyDTM=DocumentTermMatrix(ReyCorp)		#only zero-counts across all terms
+						#run LDA; Gibbs alternative is VEM; k is the number of topics we
+						#think we have
+ReyTopics=LDA(ReyDTM, method='Gibbs', k=6, control=list(seed = 77))
+terms(ReyTopics,10)
+						#output the terms and their betas - densities within topics - for 
+						#each topic
+ReyTerms=data.frame(row.names(t(as.matrix(ReyDTM))),t(as.matrix(ReyTopics@beta)))
+colnames(ReyTerms)=c('Term', 'Topic1', 'Topic2', 'Topic3', 'Topic4', 'Topic5', 'Topic6')
+
+						#re-order data frame to highlight top 10 terms for 1st topic
+ReyTerms=ReyTerms[order(ReyTerms$Topic1, decreasing = 'T'),]
+(ReyTerms[1:10,])$Term
+
+topics(ReyTopics)				#determine which topic dominates each document
+						#add the topics to original ReyPosts data frame
+ReyPosts=data.frame(ReyPosts,Topic=topics(ReyTopics))
